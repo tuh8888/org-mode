@@ -12318,6 +12318,64 @@ See `org-property-re' for match data, if applicable."
       (?c (call-interactively #'org-compute-property-at-point))
       (otherwise (user-error "No such property action %c" c)))))
 
+(defun org-fast-effort-selection ()
+  "Modification of `org-fast-todo-selection' for use with org-set-effert. Select an effort value with single keys.
+Returns the new effort value, or nil if no state change should occur.
+
+Motivated by https://emacs.stackexchange.com/questions/59424/org-set-effort-fast-effort-selection"
+  ;; Format effort values into an alist keyed by index
+  (let* ((fulltable (seq-map-indexed (lambda (e i) (cons (car e) (string-to-char (int-to-string i))))
+				     (org-property-get-allowed-values nil org-effort-property t)))
+	 (maxlen (apply 'max (mapcar
+			      (lambda (x)
+				(if (stringp (car x)) (string-width (car x)) 0))
+			      fulltable)))
+	 (expert (equal org-use-fast-todo-selection 'expert))
+	 (prompt "")
+	 (fwidth (+ maxlen 3 1 3))
+	 (ncol (/ (- (window-width) 4) fwidth))
+	 tg cnt e c tbl subtable)
+
+    (save-excursion
+      (save-window-excursion
+	(if expert
+	    (set-buffer (get-buffer-create " *Org effort"))
+	  (delete-other-windows)
+	  (set-window-buffer (split-window-vertically) (get-buffer-create " *Org effort*"))
+	  (org-switch-to-buffer-other-window " *Org effort*"))
+	(erase-buffer)
+	(setq tbl fulltable cnt 0)
+	(while (setq e (pop tbl))
+	  (setq tg (car e)
+		c (cdr e))
+	  (print (char-to-string c))
+	  (when (and (= cnt 0))
+	    (insert "  "))
+	  (setq prompt (concat prompt "[" (char-to-string c) "] " tg " "))
+	  (insert "[" c "] " tg (make-string
+				 (- fwidth 4 (length tg)) ?\ ))
+	  (when (and (= (setq cnt (1+ cnt)) ncol)
+		     ;; Avoid lines with just a closing delimiter.
+		     (not (equal (car tbl) '(:endgroup))))
+	    (insert "\n")
+	    (setq cnt 0)))
+	(insert "\n")
+	(goto-char (point-min))
+	(unless expert (org-fit-window-to-buffer))
+	(message (concat "[1-9..]:Set [SPC]:clear"
+			 (if expert (concat "\n" prompt) "")))
+	(setq c (let ((inhibit-quit t)) (read-char-exclusive)))
+	(setq subtable (nreverse subtable))
+	(cond
+	 ((or (= c ?\C-g)
+	      (and (= c ?q) (not (rassoc c fulltable))))
+	  (setq quit-flag t))
+	 ((= c ?\ ) nil)
+	 ((setq e (or (rassoc c subtable) (rassoc c fulltable))
+		tg (car e))
+	  tg)
+	 (t (setq quit-flag t)))))))
+
 (defun org-inc-effort ()
   "Increment the value of the effort property in the current entry."
   (interactive)
@@ -12343,6 +12401,7 @@ variables is set."
 	   (value
 	    (if (stringp value) value
 	      (error "Invalid effort value: %S" value)))
+	   ((eq org-use-fast-todo-selection 'expert) (org-fast-effort-selection))
 	   (t
 	    (let ((must-match
 		   (and allowed
