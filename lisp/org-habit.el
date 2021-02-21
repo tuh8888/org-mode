@@ -164,10 +164,9 @@ means of creating calendar-based reminders."
 			    '(("d" . 1)    ("w" . 7)
 			      ("m" . 30.4) ("y" . 365.25))))))
     (error "Invalid duration string: %s" ts)))
-
 (defun org-is-habit-p (&optional pom)
   "Is the task at POM or point a habit?"
-  (string= "habit" (org-entry-get (or pom (point)) "STYLE")))
+  (string= "habit" (org-entry-get (or pom (point)) "STYLE" 'selective)))
 
 (defun org-habit-parse-todo (&optional pom)
   "Parse the TODO surrounding point for its habit-related data.
