@@ -41,6 +41,7 @@
 (declare-function org-element-type "org-element" (element))
 (declare-function org-heading-components "org" ())
 (declare-function org-in-commented-heading-p "org" (&optional no-inheritance))
+(declare-function org-in-archived-heading-p "org" (&optional no-inheritance))
 (declare-function outline-previous-heading "outline" ())
 
 (defcustom org-babel-tangle-lang-exts
@@ -382,7 +383,8 @@ code blocks by target file."
 	(if (eq last-heading-pos current-heading-pos) (cl-incf counter)
 	  (setq counter 1)
 	  (setq last-heading-pos current-heading-pos)))
-      (unless (org-in-commented-heading-p)
+      (unless (or (org-in-commented-heading-p)
+		  (org-in-archived-heading-p))
 	(let* ((info (org-babel-get-src-block-info 'light))
 	       (src-lang (nth 0 info))
 	       (src-tfile (cdr (assq :tangle (nth 2 info)))))
@@ -474,9 +476,9 @@ non-nil, return the full association list to be used by
 		  file)
 		(if (and org-babel-tangle-use-relative-file-links
 			 (string-match org-link-types-re link)
-			 (string= (match-string 0 link) "file"))
+			 (string= (match-string 1 link) "file"))
 		    (concat "file:"
-			    (file-relative-name (match-string 1 link)
+			    (file-relative-name (substring link (match-end 0))
 						(file-name-directory
 						 (cdr (assq :tangle params)))))
 		  link)
@@ -516,14 +518,16 @@ which enable the original code blocks to be found."
     (goto-char (point-min))
     (let ((counter 0) new-body end)
       (while (re-search-forward org-link-bracket-re nil t)
-        (when (re-search-forward
-	       (concat " " (regexp-quote (match-string 2)) " ends here"))
-          (setq end (match-end 0))
-          (forward-line -1)
-          (save-excursion
-	    (when (setq new-body (org-babel-tangle-jump-to-org))
-	      (org-babel-update-block-body new-body)))
-          (setq counter (+ 1 counter)))
+        (if (and (match-string 2)
+		 (re-search-forward
+		  (concat " " (regexp-quote (match-string 2)) " ends here") nil t))
+	    (progn (setq end (match-end 0))
+		   (forward-line -1)
+		   (save-excursion
+		     (when (setq new-body (org-babel-tangle-jump-to-org))
+		       (org-babel-update-block-body new-body)))
+		   (setq counter (+ 1 counter)))
+	  (setq end (point)))
         (goto-char end))
       (prog1 counter (message "Detangled %d code blocks" counter)))))
 

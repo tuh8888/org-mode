@@ -96,7 +96,7 @@
 	      (if a (org-odt-export-to-odt t s v)
 		(org-open-file (org-odt-export-to-odt nil s v) 'system))))))
   :options-alist
-  '((:odt-styles-file "ODT_STYLES_FILE" nil nil t)
+  '((:odt-styles-file "ODT_STYLES_FILE" nil org-odt-styles-file t)
     (:description "DESCRIPTION" nil nil newline)
     (:keywords "KEYWORDS" nil nil space)
     (:subtitle "SUBTITLE" nil nil parse)
@@ -110,7 +110,6 @@
     (:odt-inline-formula-rules nil nil org-odt-inline-formula-rules)
     (:odt-inline-image-rules nil nil org-odt-inline-image-rules)
     (:odt-pixels-per-inch nil nil org-odt-pixels-per-inch)
-    (:odt-styles-file nil nil org-odt-styles-file)
     (:odt-table-styles nil nil org-odt-table-styles)
     (:odt-use-date-fields nil nil org-odt-use-date-fields)
     ;; Redefine regular option.
@@ -2201,16 +2200,15 @@ SHORT-CAPTION are strings."
 (defun org-odt--image-size
   (file info &optional user-width user-height scale dpi embed-as)
   (let* ((--pixels-to-cms
-	  (function (lambda (pixels dpi)
-		      (let ((cms-per-inch 2.54)
-			    (inches (/ pixels dpi)))
-			(* cms-per-inch inches)))))
+          (lambda (pixels dpi)
+            (let ((cms-per-inch 2.54)
+                  (inches (/ pixels dpi)))
+              (* cms-per-inch inches))))
 	 (--size-in-cms
-	  (function
-	   (lambda (size-in-pixels dpi)
-	     (and size-in-pixels
-		  (cons (funcall --pixels-to-cms (car size-in-pixels) dpi)
-			(funcall --pixels-to-cms (cdr size-in-pixels) dpi))))))
+	  (lambda (size-in-pixels dpi)
+	    (and size-in-pixels
+		 (cons (funcall --pixels-to-cms (car size-in-pixels) dpi)
+		       (funcall --pixels-to-cms (cdr size-in-pixels) dpi)))))
 	 (dpi (or dpi (plist-get info :odt-pixels-per-inch)))
 	 (anchor-type (or embed-as "paragraph"))
 	 (user-width (and (not scale) user-width))
@@ -2469,15 +2467,14 @@ used as a communication channel."
 	 (outer (nth 2 frame-cfg))
 	 ;; User-specified frame params (from #+ATTR_ODT spec)
 	 (user user-frame-params)
-	 (--merge-frame-params (function
-				(lambda (default user)
-				  "Merge default and user frame params."
-				  (if (not user) default
-				    (cl-assert (= (length default) 3))
-				    (cl-assert (= (length user) 3))
-				    (cl-loop for u in user
-					     for d in default
-					     collect (or u d)))))))
+	 (--merge-frame-params (lambda (default user)
+				 "Merge default and user frame params."
+				 (if (not user) default
+				   (cl-assert (= (length default) 3))
+				   (cl-assert (= (length user) 3))
+				   (cl-loop for u in user
+					    for d in default
+					    collect (or u d))))))
     (cond
      ;; Case 1: Image/Formula has no caption.
      ;;         There is only one frame, one that surrounds the image
@@ -2949,7 +2946,7 @@ channel."
 	     (when scheduled
 	       (concat
 		(format "<text:span text:style-name=\"%s\">%s</text:span>"
-			"OrgScheduledKeyword" org-deadline-string)
+			"OrgScheduledKeyword" org-scheduled-string)
 		(org-odt-timestamp scheduled contents info)))))))
 
 
@@ -3731,7 +3728,8 @@ contextual information."
 		 (cache-dir (file-name-directory input-file))
 		 (cache-subdir (concat
 				(cl-case processing-type
-				  ((dvipng imagemagick) "ltxpng/")
+				  ((dvipng imagemagick)
+				   org-preview-latex-image-directory)
 				  (mathml "ltxmathml/"))
 				(file-name-sans-extension
 				 (file-name-nondirectory input-file))))
@@ -4242,7 +4240,7 @@ Return output file's name."
 			   `((?i . ,(shell-quote-argument in-file))
 			     (?I . ,(browse-url-file-url in-file))
 			     (?f . ,out-fmt)
-			     (?o . ,out-file)
+			     (?o . ,(shell-quote-argument out-file))
 			     (?O . ,(browse-url-file-url out-file))
 			     (?d . , (shell-quote-argument out-dir))
 			     (?D . ,(browse-url-file-url out-dir))

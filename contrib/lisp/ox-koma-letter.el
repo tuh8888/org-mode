@@ -483,10 +483,6 @@ e.g. \"title-subject:t\"."
 (defvar org-koma-letter-special-contents nil
   "Holds special content temporarily.")
 
-(make-obsolete-variable 'org-koma-letter-use-title
-                        'org-export-with-title
-                        "25.1" 'set)
-
 
 ;;; Define Back-End
 
@@ -748,7 +744,8 @@ holding export options."
                 (if (symbolp with-subject) with-subject
                   (mapconcat #'symbol-name with-subject ","))))
       ;; Hyperref.
-      (format-spec hyperref-template spec)
+      (and (stringp hyperref-template)
+	   (format-spec hyperref-template spec))
       ;; Document start.
       "\\begin{document}\n\n"
       ;; Subject and title.

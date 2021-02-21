@@ -329,7 +329,9 @@ match group 2.
 Don't modify it, set `org-element-affiliated-keywords' instead.")
 
 (defconst org-element-object-restrictions
-  (let* ((standard-set (remq 'table-cell org-element-all-objects))
+  (let* ((minimal-set '(bold code entity italic latex-fragment strike-through
+			     subscript superscript underline verbatim))
+	 (standard-set (remq 'table-cell org-element-all-objects))
 	 (standard-set-no-line-break (remq 'line-break standard-set)))
     `((bold ,@standard-set)
       (footnote-reference ,@standard-set)
@@ -340,23 +342,20 @@ Don't modify it, set `org-element-affiliated-keywords' instead.")
       (keyword ,@(remq 'footnote-reference standard-set))
       ;; Ignore all links in a link description.  Also ignore
       ;; radio-targets and line breaks.
-      (link bold code entity export-snippet inline-babel-call inline-src-block
-	    italic latex-fragment macro statistics-cookie strike-through
-	    subscript superscript underline verbatim)
+      (link export-snippet inline-babel-call inline-src-block macro
+	    statistics-cookie ,@minimal-set)
       (paragraph ,@standard-set)
       ;; Remove any variable object from radio target as it would
       ;; prevent it from being properly recognized.
-      (radio-target bold code entity italic latex-fragment strike-through
-		    subscript superscript underline superscript)
+      (radio-target ,@minimal-set)
       (strike-through ,@standard-set)
       (subscript ,@standard-set)
       (superscript ,@standard-set)
       ;; Ignore inline babel call and inline source block as formulas
       ;; are possible.  Also ignore line breaks and statistics
       ;; cookies.
-      (table-cell bold code entity export-snippet footnote-reference italic
-		  latex-fragment link macro radio-target strike-through
-		  subscript superscript target timestamp underline verbatim)
+      (table-cell export-snippet footnote-reference link macro radio-target
+		  target timestamp ,@minimal-set)
       (table-row table-cell)
       (underline ,@standard-set)
       (verse-block ,@standard-set)))
@@ -365,10 +364,6 @@ Don't modify it, set `org-element-affiliated-keywords' instead.")
 key is an element or object type containing objects and value is
 a list of types that can be contained within an element or object
 of such type.
-
-For example, in a `radio-target' object, one can only find
-entities, latex-fragments, subscript, superscript and text
-markup.
 
 This alist also applies to secondary string.  For example, an
 `headline' type element doesn't directly contain objects, but
@@ -2179,9 +2174,9 @@ the buffer position at the beginning of the first affiliated
 keyword and CDR is a plist of affiliated keywords along with
 their value.
 
-Return a list whose CAR is `keyword' and CDR is a plist
-containing `:key', `:value', `:begin', `:end', `:post-blank' and
-`:post-affiliated' keywords."
+Return a list whose CAR is a normalized `keyword' (uppercase) and
+CDR is a plist containing `:key', `:value', `:begin', `:end',
+`:post-blank' and `:post-affiliated' keywords."
   (save-excursion
     ;; An orphaned affiliated keyword is considered as a regular
     ;; keyword.  In this case AFFILIATED is nil, so we take care of
@@ -3956,14 +3951,36 @@ element it has to parse."
 		  ;; There is no strict definition of a table.el
 		  ;; table.  Try to prevent false positive while being
 		  ;; quick.
-		  (let ((rule-regexp "[ \t]*\\+\\(-+\\+\\)+[ \t]*$")
+		  (let ((rule-regexp
+			 (rx (zero-or-more (any " \t"))
+			     "+"
+			     (one-or-more (one-or-more "-") "+")
+			     (zero-or-more (any " \t"))
+			     eol))
+			(non-table.el-line
+			 (rx bol
+			     (zero-or-more (any " \t"))
+			     (or eol (not (any "+| \t")))))
 			(next (line-beginning-position 2)))
-		    (and (looking-at rule-regexp)
-			 (save-excursion
-			   (forward-line)
-			   (re-search-forward "^[ \t]*\\($\\|[^|]\\)" limit t)
-			   (and (> (line-beginning-position) next)
-				(org-match-line rule-regexp))))))
+		    ;; Start with a full rule.
+		    (and
+		     (looking-at rule-regexp)
+		     (< next limit)	;no room for a table.el table
+		     (save-excursion
+		       (end-of-line)
+		       (cond
+			;; Must end with a full rule.
+			((not (re-search-forward non-table.el-line limit 'move))
+			 (beginning-of-line)
+			 (looking-at rule-regexp))
+			;; Ignore pseudo-tables with a single
+			;; rule.
+			((= next (line-beginning-position))
+			 nil)
+			;; Must end with a full rule.
+			(t
+			 (forward-line -1)
+			 (looking-at rule-regexp)))))))
 	      (org-element-table-parser limit affiliated))
 	     ;; List.
 	     ((looking-at (org-item-re))
@@ -4138,7 +4155,9 @@ If STRING is the empty string or nil, return nil."
 	  (dolist (v local-variables)
 	    (ignore-errors
 	      (if (symbolp v) (makunbound v)
-		(set (make-local-variable (car v)) (cdr v)))))
+		;; Don't set file name to avoid mishandling hooks (bug#44524)
+		(unless (memq (car v) '(buffer-file-name buffer-file-truename))
+		  (set (make-local-variable (car v)) (cdr v))))))
 	  ;; Transferring local variables may put the temporary buffer
 	  ;; into a read-only state.  Make sure we can insert STRING.
 	  (let ((inhibit-read-only t)) (insert string))
@@ -4329,7 +4348,7 @@ located inside the current one.  "
   (if parent?
       (pcase type
 	(`headline 'section)
-	(`first-section 'top-comment)
+	((and (guard (eq mode 'first-section)) `section) 'top-comment)
 	(`inlinetask 'planning)
 	(`plain-list 'item)
 	(`property-drawer 'node-property)
@@ -4497,15 +4516,21 @@ to an appropriate container (e.g., a paragraph)."
 			     (and (memq 'latex-fragment restriction)
 				  (org-element-latex-fragment-parser)))))
 		      (?\[
-		       (if (eq (aref result 1) ?\[)
-			   (and (memq 'link restriction)
-				(org-element-link-parser))
-			 (or (and (memq 'footnote-reference restriction)
-				  (org-element-footnote-reference-parser))
-			     (and (memq 'timestamp restriction)
-				  (org-element-timestamp-parser))
-			     (and (memq 'statistics-cookie restriction)
-				  (org-element-statistics-cookie-parser)))))
+		       (pcase (aref result 1)
+			 ((and ?\[
+			       (guard (memq 'link restriction)))
+			  (org-element-link-parser))
+			 ((and ?f
+			       (guard (memq 'footnote-reference restriction)))
+			  (org-element-footnote-reference-parser))
+			 ((and (or ?% ?/)
+			       (guard (memq 'statistics-cookie restriction)))
+			  (org-element-statistics-cookie-parser))
+			 (_
+			  (or (and (memq 'timestamp restriction)
+				   (org-element-timestamp-parser))
+			      (and (memq 'statistics-cookie restriction)
+				   (org-element-statistics-cookie-parser))))))
 		      ;; This is probably a plain link.
 		      (_ (and (memq 'link restriction)
 			      (org-element-link-parser)))))))
@@ -4652,19 +4677,18 @@ to interpret.  Return Org syntax as a string."
   "Return ELEMENT's affiliated keywords as Org syntax.
 If there is no affiliated keyword, return the empty string."
   (let ((keyword-to-org
-	 (function
-	  (lambda (key value)
-	    (let (dual)
-	      (when (member key org-element-dual-keywords)
-		(setq dual (cdr value) value (car value)))
-	      (concat "#+" (downcase key)
-		      (and dual
-			   (format "[%s]" (org-element-interpret-data dual)))
-		      ": "
-		      (if (member key org-element-parsed-keywords)
-			  (org-element-interpret-data value)
-			value)
-		      "\n"))))))
+	 (lambda (key value)
+	   (let (dual)
+	     (when (member key org-element-dual-keywords)
+	       (setq dual (cdr value) value (car value)))
+	     (concat "#+" (downcase key)
+		     (and dual
+			  (format "[%s]" (org-element-interpret-data dual)))
+		     ": "
+		     (if (member key org-element-parsed-keywords)
+			 (org-element-interpret-data value)
+		       value)
+		     "\n")))))
     (mapconcat
      (lambda (prop)
        (let ((value (org-element-property prop element))
@@ -4820,10 +4844,12 @@ indentation removed from its contents."
 ;;
 ;; A single public function is provided: `org-element-cache-reset'.
 ;;
-;; Cache is enabled by default, but can be disabled globally with
+;; Cache is disabled by default for now because it sometimes triggers
+;; freezes, but it can be enabled globally with
 ;; `org-element-use-cache'.  `org-element-cache-sync-idle-time',
-;; org-element-cache-sync-duration' and `org-element-cache-sync-break'
-;; can be tweaked to control caching behavior.
+;; `org-element-cache-sync-duration' and
+;; `org-element-cache-sync-break' can be tweaked to control caching
+;; behavior.
 ;;
 ;; Internally, parsed elements are stored in an AVL tree,
 ;; `org-element--cache'.  This tree is updated lazily: whenever
@@ -4891,7 +4917,7 @@ with `org-element--cache-compare'.  This cache is used in
 
 A request is a vector with the following pattern:
 
- \[NEXT BEG END OFFSET PARENT PHASE]
+ [NEXT BEG END OFFSET PARENT PHASE]
 
 Processing a synchronization request consists of three phases:
 

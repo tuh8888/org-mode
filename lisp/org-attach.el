@@ -42,7 +42,8 @@
 (declare-function dired-dwim-target-directory "dired-aux")
 (declare-function org-element-property "org-element" (property element))
 (declare-function org-element-type "org-element" (element))
-(declare-function org-export-link-as-file "org-export" (path description backend info))
+(declare-function org-inlinetask-goto-beginning "org-inlinetask" ())
+(declare-function org-inlinetask-in-task-p "org-inlinetask" ())
 
 (defgroup org-attach nil
   "Options concerning attachments in Org mode."
@@ -131,8 +132,7 @@ Selective means to respect the inheritance setting in
   :type '(choice
 	  (const :tag "Don't use inheritance" nil)
 	  (const :tag "Inherit parent node attachments" t)
-	  (const :tag "Respect org-use-property-inheritance" selective))
-  :type 'boolean)
+	  (const :tag "Respect org-use-property-inheritance" selective)))
 
 (defcustom org-attach-store-link-p nil
   "Non-nil means store a link to a file when attaching it."
@@ -258,7 +258,14 @@ Shows a list of commands and prompts for another key to execute a command."
       (unless marker
 	(error "No item in current line")))
     (org-with-point-at marker
-      (org-back-to-heading-or-point-min t)
+      (if (and (featurep 'org-inlinetask)
+	       (not (org-inlinetask-in-task-p)))
+	  (org-with-limited-levels
+	   (org-back-to-heading-or-point-min t))
+        (if (and (featurep 'org-inlinetask)
+		 (org-inlinetask-in-task-p))
+            (org-inlinetask-goto-beginning)
+          (org-back-to-heading-or-point-min t)))
       (save-excursion
 	(save-window-excursion
 	  (unless org-attach-expert
@@ -575,13 +582,18 @@ The attachment is created as an Emacs buffer."
 (defun org-attach-delete-all (&optional force)
   "Delete all attachments from the current outline node.
 This actually deletes the entire attachment directory.
-A safer way is to open the directory in dired and delete from there."
+A safer way is to open the directory in dired and delete from there.
+
+With prefix argument FORCE, directory will be recursively deleted
+with no prompts."
   (interactive "P")
   (let ((attach-dir (org-attach-dir)))
     (when (and attach-dir
 	       (or force
 		   (yes-or-no-p "Really remove all attachments of this entry? ")))
-      (delete-directory attach-dir (yes-or-no-p "Recursive?") t)
+      (delete-directory attach-dir
+			(or force (yes-or-no-p "Recursive?"))
+			t)
       (message "Attachment directory removed")
       (run-hook-with-args 'org-attach-after-change-hook attach-dir)
       (org-attach-untag))))
@@ -663,7 +675,7 @@ It is meant to be added to `org-export-before-parsing-hook'."
 				    (org-element-property :contents-end link))))
 		 (file (org-element-property :path link))
 		 (new-link (org-link-make-string
-			    (concat "attachment:" (org-attach-expand file))
+			    (concat "file:" (org-attach-expand file))
 			    description)))
 	    (goto-char (org-element-property :end link))
 	    (skip-chars-backward " \t")
@@ -677,7 +689,6 @@ See `org-open-file' for details about ARG."
 
 (org-link-set-parameters "attachment"
 			 :follow #'org-attach-follow
-			 :export #'org-export-link-as-file
                          :complete #'org-attach-complete-link)
 
 (defun org-attach-complete-link ()

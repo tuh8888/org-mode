@@ -63,10 +63,12 @@
 (declare-function org-insert-heading "org" (&optional arg invisible-ok top))
 (declare-function org-load-modules-maybe "org" (&optional force))
 (declare-function org-mark-ring-push "org" (&optional pos buffer))
+(declare-function org-mode "org" ())
 (declare-function org-occur "org" (regexp &optional keep-previous callback))
 (declare-function org-open-file "org" (path &optional in-emacs line search))
 (declare-function org-overview "org" ())
 (declare-function org-restart-font-lock "org" ())
+(declare-function org-run-like-in-org-mode "org" (cmd))
 (declare-function org-show-context "org" (&optional key))
 (declare-function org-src-coderef-format "org-src" (&optional element))
 (declare-function org-src-coderef-regexp "org-src" (fmt &optional label))
@@ -91,7 +93,7 @@ The key in each association is a string of the link type.
 Subsequent optional elements make up a property list for that
 type.
 
-All properties ar optional.  However, the most important ones
+All properties are optional.  However, the most important ones
 are, in this order, `:follow', `:export', and `:store', described
 below.
 
@@ -111,10 +113,6 @@ below.
   - the description as a string, or nil,
   - the export back-end,
   - the export communication channel, as a plist.
-
-  If the new link type is meant to be exported as a \"file\"-link
-  (or as an image), consider using `org-export-link-as-file',
-  either as an helper function, or as a value for this parameter.
 
   When nil, export for that type of link is delegated to the
   back-end.
@@ -216,13 +214,18 @@ relative  Relative to the current directory, i.e. the directory of the file
 absolute  Absolute path, if possible with ~ for home directory.
 noabbrev  Absolute path, no abbreviation of home directory.
 adaptive  Use relative path for files in the current directory and sub-
-          directories of it.  For other files, use an absolute path."
+          directories of it.  For other files, use an absolute path.
+
+Alternatively, users may supply a custom function that takes the
+full filename as an argument and returns the path."
   :group 'org-link
   :type '(choice
 	  (const relative)
 	  (const absolute)
 	  (const noabbrev)
-	  (const adaptive))
+	  (const adaptive)
+	  (function))
+  :package-version '(Org . "9.5")
   :safe #'symbolp)
 
 (defcustom org-link-abbrev-alist nil
@@ -464,7 +467,7 @@ This is for example useful to limit the length of the subject.
 
 Examples: \"%f on: %.30s\", \"Email from %f\", \"Email %c\""
   :group 'org-link-store
-  :package-version '(Org . 9.3)
+  :package-version '(Org . "9.3")
   :type 'string
   :safe #'stringp)
 
@@ -741,21 +744,32 @@ White spaces are not significant."
 		(mapconcat #'identity
 			   (cl-subseq lines 0 org-link-context-for-files)
 			   "\n"))))
-      (org-link--squeeze-white-spaces context))))
+      context)))
 
-(defun org-link--squeeze-white-spaces (string)
-  "Trim STRING, pack contiguous white spaces, and return it."
-  (replace-regexp-in-string "[ \t\n]+" " " (org-trim string)))
-
-(defun org-link--clear-syntax-from-context (context)
-  "Remove special syntax from CONTEXT string and return it."
-  (while (cond ((and (string-prefix-p "(" context)
-		     (string-suffix-p ")" context))
-		(setq context (substring context 1 -1)))
-	       ((string-match "\\`[#*]+" context)
-		(setq context (substring context (match-end 0))))
-	       (t nil)))
-  context)
+(defun org-link--normalize-string (string &optional context)
+  "Remove ignored contents from STRING string and return it.
+This function removes contiguous white spaces and statistics
+cookies.  When optional argument CONTEXT is non-nil, it assumes
+STRING is a context string, and also removes special search
+syntax around the string."
+  (let ((string
+	 (org-trim
+	  (replace-regexp-in-string
+	   (rx (one-or-more (any " \t")))
+	   " "
+	   (replace-regexp-in-string
+	    ;; Statistics cookie regexp.
+	    (rx (seq "[" (0+ digit) (or "%" (seq "/" (0+ digit))) "]"))
+	    " "
+	    string)))))
+    (when context
+      (while (cond ((and (string-prefix-p "(" string)
+			 (string-suffix-p ")" string))
+		    (setq string (org-trim (substring string 1 -1))))
+		   ((string-match "\\`[#*]+[ \t]*" string)
+		    (setq string (substring string (match-end 0))))
+		   (t nil))))
+    string))
 
 
 ;;; Public API
@@ -940,9 +954,7 @@ E.g. \"%C3%B6\" becomes the german o-Umlaut."
 (defun org-link-make-string (link &optional description)
   "Make a bracket link, consisting of LINK and DESCRIPTION.
 LINK is escaped with backslashes for inclusion in buffer."
-  (unless (org-string-nw-p link) (error "Empty link"))
-  (let* ((uri (org-link-escape link))
-	 (zero-width-space (string ?\x200B))
+  (let* ((zero-width-space (string ?\x200B))
 	 (description
 	  (and (org-string-nw-p description)
 	       ;; Description cannot contain two consecutive square
@@ -955,9 +967,10 @@ LINK is escaped with backslashes for inclusion in buffer."
 		(replace-regexp-in-string "]\\'"
 					  (concat "\\&" zero-width-space)
 					  (org-trim description))))))
-    (format "[[%s]%s]"
-	    uri
-	    (if description (format "[%s]" description) ""))))
+    (if (not (org-string-nw-p link)) description
+      (format "[[%s]%s]"
+	      (org-link-escape link)
+	      (if description (format "[%s]" description) "")))))
 
 (defun org-store-link-functions ()
   "List of functions that are called to create and store a link.
@@ -1167,10 +1180,9 @@ of matched result, which is either `dedicated' or `fuzzy'."
 	     (catch :name-match
 	       (goto-char (point-min))
 	       (while (re-search-forward name nil t)
-		 (let ((element (org-element-at-point)))
-		   (when (equal words
-				(split-string
-				 (org-element-property :name element)))
+		 (let* ((element (org-element-at-point))
+			(name (org-element-property :name element)))
+		   (when (and name (equal words (split-string name)))
 		     (setq type 'dedicated)
 		     (beginning-of-line)
 		     (throw :name-match t))))
@@ -1183,18 +1195,14 @@ of matched result, which is either `dedicated' or `fuzzy'."
 		  (format "%s.*\\(?:%s[ \t]\\)?.*%s"
 			  org-outline-regexp-bol
 			  org-comment-string
-			  (mapconcat #'regexp-quote words ".+")))
-		 (cookie-re "\\[[0-9]*\\(?:%\\|/[0-9]*\\)\\]")
-		 (comment-re (format "\\`%s[ \t]+" org-comment-string)))
+			  (mapconcat #'regexp-quote words ".+"))))
 	     (goto-char (point-min))
 	     (catch :found
 	       (while (re-search-forward title-re nil t)
 		 (when (equal words
 			      (split-string
-			       (replace-regexp-in-string
-				cookie-re ""
-				(replace-regexp-in-string
-				 comment-re "" (org-get-heading t t t)))))
+			       (org-link--normalize-string
+				(org-get-heading t t t t))))
 		   (throw :found t)))
 	       nil)))
       (beginning-of-line)
@@ -1246,22 +1254,17 @@ of matched result, which is either `dedicated' or `fuzzy'."
 
 (defun org-link-heading-search-string (&optional string)
   "Make search string for the current headline or STRING.
-When optional argument STRING is non-nil, assume it a headline.
+
 Search string starts with an asterisk.  COMMENT keyword and
 statistics cookies are removed, and contiguous spaces are packed
-into a single one."
-  (let ((context
-	 (if (not string)
-	     (concat "*" (org-trim (org-get-heading nil nil nil t)))
-	   (let ((s (org-trim string))
-		 (comment-re (format "\\`%s[ \t]+" org-comment-string)))
-	     (unless (string-prefix-p "*" s) (setq s (concat "*" s)))
-	     (replace-regexp-in-string comment-re "" s))))
-	(cookie-re "\\[[0-9]*\\(?:%\\|/[0-9]*\\)\\]"))
-    (org-trim
-     (replace-regexp-in-string
-      cookie-re ""
-      (org-link--squeeze-white-spaces context)))))
+into a single one.
+
+When optional argument STRING is non-nil, assume it a headline,
+without any asterisk, TODO or COMMENT keyword, and without any
+priority cookie or tag."
+  (concat "*"
+	  (org-link--normalize-string
+	   (or string (org-get-heading t t t t)))))
 
 (defun org-link-open-as-file (path arg)
   "Pretend PATH is a file name and open it.
@@ -1271,14 +1274,14 @@ search options, separated from the file name with \"::\".
 
 This function is meant to be used as a possible tool for
 `:follow' property in `org-link-parameters'."
-  (if (string-match "[*?{]" (file-name-nondirectory path))
-      (dired path)
-    (let* ((option (and (string-match "::\\(.*\\)\\'" path)
-			(match-string 1 path)))
-	   (path (if (not option) path
-		   (substring path 0 (match-beginning 0)))))
+  (let* ((option (and (string-match "::\\(.*\\)\\'" path)
+		      (match-string 1 path)))
+	 (file-name (if (not option) path
+		      (substring path 0 (match-beginning 0)))))
+    (if (string-match "[*?{]" (file-name-nondirectory file-name))
+	(dired file-name)
       (apply #'org-open-file
-	     path
+	     file-name
 	     arg
 	     (cond ((not option) nil)
 		   ((string-match-p "\\`[0-9]+\\'" option)
@@ -1559,10 +1562,16 @@ non-nil."
 	  (org-link-store-props :type "calendar" :date cd)))
 
        ((eq major-mode 'help-mode)
-	(setq link (concat "help:" (save-excursion
-				     (goto-char (point-min))
-				     (looking-at "^[^ ]+")
-				     (match-string 0))))
+	(let ((symbol (replace-regexp-in-string
+		       ;; Help mode escapes backquotes and backslashes
+		       ;; before displaying them.  E.g., "`" appears
+		       ;; as "\'" for reasons.  Work around this.
+		       (rx "\\" (group (or "`" "\\"))) "\\1"
+		       (save-excursion
+			 (goto-char (point-min))
+			 (looking-at "^[^ ]+")
+			 (match-string 0)))))
+	  (setq link (concat "help:" symbol)))
 	(org-link-store-props :type "help"))
 
        ((eq major-mode 'w3-mode)
@@ -1639,17 +1648,24 @@ non-nil."
 		    (context
 		     (cond
 		      ((let ((region (org-link--context-from-region)))
-			 (and region
-			      (org-link--clear-syntax-from-context region))))
+			 (and region (org-link--normalize-string region t))))
 		      (name)
 		      ((org-before-first-heading-p)
-		       (org-link--clear-syntax-from-context
-			(org-link--squeeze-white-spaces
-			 (org-current-line-string))))
+		       (org-link--normalize-string (org-current-line-string) t))
 		      (t (org-link-heading-search-string)))))
 	       (when (org-string-nw-p context)
 		 (setq cpltxt (format "%s::%s" cpltxt context))
-		 (setq desc (or name (org-get-heading t t t t) "NONE")))))
+		 (setq desc
+		       (or name
+			   ;; Although description is not a search
+			   ;; string, use `org-link--normalize-string'
+			   ;; to prettify it (contiguous white spaces)
+			   ;; and remove volatile contents (statistics
+			   ;; cookies).
+			   (and (not (org-before-first-heading-p))
+				(org-link--normalize-string
+				 (org-get-heading t t t t)))
+			   "NONE")))))
 	   (setq link cpltxt)))))
 
        ((buffer-file-name (buffer-base-buffer))
@@ -1659,10 +1675,10 @@ non-nil."
 			      (buffer-file-name (buffer-base-buffer)))))
 	;; Add a context search string.
 	(when (org-xor org-link-context-for-files (equal arg '(4)))
-	  (let ((context (org-link--clear-syntax-from-context
+	  (let ((context (org-link--normalize-string
 			  (or (org-link--context-from-region)
-			      (org-link--squeeze-white-spaces
-			       (org-current-line-string))))))
+			      (org-current-line-string))
+			  t)))
 	    ;; Only use search option if there is some text.
 	    (when (org-string-nw-p context)
 	      (setq cpltxt (format "%s::%s" cpltxt context))
@@ -1689,8 +1705,10 @@ non-nil."
 	  (push (list link desc) org-stored-links)
 	  (message "Stored: %s" (or desc link))
 	  (when custom-id
-	    (setq link (concat "file:" (abbreviate-file-name
-					(buffer-file-name)) "::#" custom-id))
+	    (setq link (concat "file:"
+			       (abbreviate-file-name
+				(buffer-file-name (buffer-base-buffer)))
+			       "::#" custom-id))
 	    (push (list link desc) org-stored-links)))
 	(car org-stored-links)))))
 
@@ -1831,13 +1849,14 @@ Use TAB to complete link prefixes, then RET for type-specific completion support
     ;; Check if we are linking to the current file with a search
     ;; option If yes, simplify the link by using only the search
     ;; option.
-    (when (and buffer-file-name
+    (when (and (buffer-file-name (buffer-base-buffer))
 	       (let ((case-fold-search nil))
 		 (string-match "\\`file:\\(.+?\\)::" link)))
       (let ((path (match-string-no-properties 1 link))
 	    (search (substring-no-properties link (match-end 0))))
 	(save-match-data
-	  (when (equal (file-truename buffer-file-name) (file-truename path))
+	  (when (equal (file-truename (buffer-file-name (buffer-base-buffer)))
+		       (file-truename path))
 	    ;; We are linking to this same file, with a search option
 	    (setq link search)))))
 
@@ -1863,6 +1882,9 @@ Use TAB to complete link prefixes, then RET for type-specific completion support
 	    (setq path (expand-file-name path)))
 	   ((eq org-link-file-path-type 'relative)
 	    (setq path (file-relative-name path)))
+	   ((functionp org-link-file-path-type)
+	    (setq path (funcall org-link-file-path-type
+				(expand-file-name path))))
 	   (t
 	    (save-match-data
 	      (if (string-match (concat "^" (regexp-quote

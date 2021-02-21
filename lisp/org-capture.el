@@ -159,14 +159,20 @@ description  A short string describing the template, will be shown during
 type         The type of entry.  Valid types are:
                entry       an Org node, with a headline.  Will be filed
                            as the child of the target entry or as a
-                           top-level entry.
+                           top-level entry.  Its default template is:
+                             \"* %?\n %a\"
                item        a plain list item, will be placed in the
-                           first plain list at the target
-                           location.
+                           first plain list at the target location.
+                           Its default template is:
+                             \"- %?\"
                checkitem   a checkbox item.  This differs from the
                            plain list item only in so far as it uses a
-                           different default template.
+                           different default template.  Its default
+                           template is:
+                             \"- [ ] %?\"
                table-line  a new line in the first table at target location.
+                           Its default template is:
+                             \"| %? |\"
                plain       text to be inserted as it is.
 
 target       Specification of where the captured item should be placed.
@@ -214,9 +220,10 @@ target       Specification of where the captured item should be placed.
                 Most general way: write your own function which both visits
                 the file and moves point to the right location
 
-template     The template for creating the capture item.  If you leave this
-             empty, an appropriate default template will be used.  See below
-             for more details.  Instead of a string, this may also be one of
+template     The template for creating the capture item.
+             If it is an empty string or nil, a default template based on
+             the entry type will be used (see the \"type\" section above).
+             Instead of a string, this may also be one of:
 
                  (file \"/path/to/template-file\")
                  (function function-returning-the-template)
@@ -263,7 +270,9 @@ properties are:
  :time-prompt        Prompt for a date/time to be used for date/week trees
                      and when filling the template.
 
- :tree-type          When `week', make a week tree instead of the month tree.
+ :tree-type          When `week', make a week tree instead of the month-day
+                     tree.  When `month', make a month tree instead of the
+                     month-day tree.
 
  :unnarrowed         Do not narrow the target buffer, simply show the
                      full buffer.  Default is to narrow it so that you
@@ -308,6 +317,7 @@ be replaced with content and expanded:
   %a          Annotation, normally the link created with `org-store-link'.
   %A          Like %a, but prompt for the description part.
   %l          Like %a, but only insert the literal link.
+  %L          Like %l, but without brackets (the link content itself).
   %c          Current kill ring head.
   %x          Content of the X clipboard.
   %k          Title of currently clocked task.
@@ -324,8 +334,10 @@ be replaced with content and expanded:
   %^C         Interactive selection of which kill or clip to use.
   %^L         Like %^C, but insert as link.
   %^{prop}p   Prompt the user for a value for property `prop'.
+              A default value can be specified like this:
+              %^{prop|default}p.
   %^{prompt}  Prompt the user for a string and replace this sequence with it.
-              A default value and a completion table ca be specified like this:
+              A default value and a completion table can be specified like this:
               %^{prompt|default|completion2|completion3|...}.
   %?          After completing the template, position cursor here.
   %\\1 ... %\\N Insert the text entered at the nth %^{prompt}, where N
@@ -354,7 +366,7 @@ calendar                |  %:type %:date
 When you need to insert a literal percent sign in the template,
 you can escape ambiguous cases with a backward slash, e.g., \\%i."
   :group 'org-capture
-  :version "24.1"
+  :package-version '(Org . "9.5")
   :set (lambda (s v) (set s (org-capture-upgrade-templates v)))
   :type
   (let ((file-variants '(choice :tag "Filename       "
@@ -628,7 +640,7 @@ of the day at point (if any) or the current HH:MM time."
     (setq org-overriding-default-time
 	  (org-get-cursor-date (equal goto 1))))
   (cond
-   ((equal goto '(4)) (org-capture-goto-target))
+   ((equal goto '(4))  (org-capture-goto-target keys))
    ((equal goto '(16)) (org-capture-goto-last-stored))
    (t
     (let* ((orig-buf (current-buffer))
@@ -728,15 +740,10 @@ captured item after finalizing."
 
   (run-hooks 'org-capture-prepare-finalize-hook)
 
-  ;; Fix missing final newline, as it may have been deleted by accident
-  (when (eq (org-capture-get :type 'local) 'entry)
-    (save-excursion
-      (goto-char (point-max))
-      (and (not (looking-at-p "^"))
-	   (org-with-wide-buffer
-	    (and (not (looking-at-p org-heading-regexp))
-		 (not (eobp))))
-	   (insert "\n"))))
+  ;; Update `org-capture-plist' with the buffer-local value.  Since
+  ;; captures can be run concurrently, this is to ensure that
+  ;; `org-capture-after-finalize-hook' accesses the proper plist.
+  (setq org-capture-plist org-capture-current-plist)
 
   ;; Did we start the clock in this capture buffer?
   (when (and org-capture-clock-was-started
@@ -1034,7 +1041,7 @@ Store them in the capture property list."
 			 (apply #'encode-time 0 0
 				org-extend-today-until
 				(cl-cdddr (decode-time prompt-time))))
-			((string-match "\\([^ ]+\\)--?[^ ]+[ ]+\\(.*\\)"
+			((string-match "\\([^ ]+\\)-[^ ]+[ ]+\\(.*\\)"
 				       org-read-date-final-answer)
 			 ;; Replace any time range by its start.
 			 (apply #'encode-time
@@ -1128,8 +1135,8 @@ may have been stored before."
     (`plain (org-capture-place-plain-text))
     (`item (org-capture-place-item))
     (`checkitem (org-capture-place-item)))
-  (org-capture-mode 1)
-  (setq-local org-capture-current-plist org-capture-plist))
+  (setq-local org-capture-current-plist org-capture-plist)
+  (org-capture-mode 1))
 
 (defun org-capture-place-entry ()
   "Place the template as a new Org entry."
@@ -1142,7 +1149,14 @@ may have been stored before."
     (when exact-position (goto-char exact-position))
     (cond
      ;; Force insertion at point.
-     ((org-capture-get :insert-here) nil)
+     (insert-here?
+      ;; FIXME: level should probably set directly within (let ...).
+      (setq level (org-get-valid-level
+                   (if (or (org-at-heading-p)
+                           (ignore-errors
+			     (save-excursion (org-back-to-heading t))))
+                       (org-outline-level)
+                     1))))
      ;; Insert as a child of the current entry.
      ((org-capture-get :target-entry-p)
       (setq level (org-get-valid-level
@@ -1166,10 +1180,8 @@ may have been stored before."
 	(org-capture-empty-lines-after)
 	(unless (org-at-heading-p) (outline-next-heading))
 	(org-capture-mark-kill-region origin (point))
-	(org-capture-narrow beg (point))
-	(when (or (search-backward "%?" beg t)
-		  (search-forward "%?" nil t))
-	  (replace-match ""))))))
+	(org-capture-narrow beg (if (eobp) (point) (1- (point))))
+	(org-capture--position-cursor beg (point))))))
 
 (defun org-capture-place-item ()
   "Place the template as a new plain list item."
@@ -1281,9 +1293,7 @@ may have been stored before."
 	;; not narrow at the beginning of the next line, possibly
 	;; altering its structure (e.g., when it is a headline).
 	(org-capture-narrow beg (1- end))
-	(when (or (search-backward "%?" beg t)
-		  (search-forward "%?" end t))
-	  (replace-match ""))))))
+	(org-capture--position-cursor beg end)))))
 
 (defun org-capture-place-table-line ()
   "Place the template as a table line."
@@ -1365,9 +1375,7 @@ may have been stored before."
 	;; TEXT is guaranteed to end with a newline character.  Ignore
 	;; it when narrowing so as to not alter data on the next line.
 	(org-capture-narrow beg (1- end))
-	(when (or (search-backward "%?" beg t)
-		  (search-forward "%?" end t))
-	  (replace-match ""))))))
+	(org-capture--position-cursor beg (1- end))))))
 
 (defun org-capture-place-plain-text ()
   "Place the template plainly.
@@ -1402,9 +1410,7 @@ Of course, if exact position has been required, just put it there."
 	(org-capture-empty-lines-after)
 	(org-capture-mark-kill-region origin (point))
 	(org-capture-narrow beg end)
-	(when (or (search-backward "%?" beg t)
-		  (search-forward "%?" end t))
-	  (replace-match ""))))))
+	(org-capture--position-cursor beg end)))))
 
 (defun org-capture-mark-kill-region (beg end)
   "Mark the region that will have to be killed when aborting capture."
@@ -1450,8 +1456,15 @@ Of course, if exact position has been required, just put it there."
 (defun org-capture-narrow (beg end)
   "Narrow, unless configuration says not to narrow."
   (unless (org-capture-get :unnarrowed)
-    (narrow-to-region beg end)
-    (goto-char beg)))
+    (narrow-to-region beg end)))
+
+(defun org-capture--position-cursor (beg end)
+  "Move point to first \"%?\" location or at start of template.
+BEG and END are buffer positions at the beginning and end position
+of the template."
+  (goto-char beg)
+  (when (search-forward "%?" end t)
+    (replace-match "")))
 
 (defun org-capture-empty-lines-before (&optional n)
   "Set the correct number of empty lines before the insertion point.
@@ -1585,6 +1598,9 @@ The template may still contain \"%?\" for cursor positioning."
 	 (v-l (if (and v-a (string-match l-re v-a))
 		  (replace-match "[[\\1]]" nil nil v-a)
 		v-a))
+	 (v-L (if (and v-a (string-match l-re v-a))
+		  (replace-match "\\1" nil nil v-a)
+		v-a))
 	 (v-n user-full-name)
 	 (v-k (if (marker-buffer org-clock-marker)
 		  (org-no-properties org-clock-heading)
@@ -1637,7 +1653,7 @@ The template may still contain \"%?\" for cursor positioning."
       ;; Mark %() embedded elisp for later evaluation.
       (org-capture-expand-embedded-elisp 'mark)
       ;; Expand non-interactive templates.
-      (let ((regexp "%\\(:[-A-Za-z]+\\|<\\([^>\n]+\\)>\\|[aAcfFikKlntTuUx]\\)"))
+      (let ((regexp "%\\(:[-A-Za-z]+\\|<\\([^>\n]+\\)>\\|[aAcfFikKlLntTuUx]\\)"))
 	(save-excursion
 	  (while (re-search-forward regexp nil t)
 	    ;; `org-capture-escaped-%' may modify buffer and cripple
@@ -1674,6 +1690,7 @@ The template may still contain \"%?\" for cursor positioning."
 			  (?k v-k)
 			  (?K v-K)
 			  (?l v-l)
+			  (?L v-L)
 			  (?n v-n)
 			  (?t v-t)
 			  (?T v-T)
@@ -1775,7 +1792,8 @@ The template may still contain \"%?\" for cursor positioning."
 					   (setq l (org-up-heading-safe)))
 					 (if l (point-marker)
 					   (point-min-marker)))))))
-			    (value (org-read-property-value prompt pom)))
+			    (value
+			     (org-read-property-value prompt pom default)))
 		       (org-set-property prompt value)))
 		    ((or "t" "T" "u" "U")
 		     ;; These are the date/time related ones.
@@ -1936,9 +1954,5 @@ Assume sexps have been marked with
 
 
 (provide 'org-capture)
-
-;; Local variables:
-;; generated-autoload-file: "org-loaddefs.el"
-;; End:
 
 ;;; org-capture.el ends here

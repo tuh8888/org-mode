@@ -95,7 +95,7 @@
 ;; The link creation part has been part of Org for a long time.
 ;;
 ;; Creating better capture template information was inspired by a request
-;; of Austin Frank: http://article.gmane.org/gmane.emacs.orgmode/4112
+;; of Austin Frank: https://orgmode.org/list/m0myu03vbx.fsf@gmail.com
 ;; and then implemented by Bastien Guerry.
 ;;
 ;; Eric Schulte eventually added the functions for translating between
@@ -136,6 +136,8 @@
 (declare-function org-narrow-to-subtree "org" ())
 (declare-function org-set-property "org" (property value))
 (declare-function org-toggle-tag "org" (tag &optional onoff))
+
+(declare-function org-search-view "org-agenda" (&optional todo-only string edit-at))
 
 
 ;;; Bibtex data
@@ -317,7 +319,7 @@ is non-nil."
   "Controls whether inherited tags are converted to bibtex keywords.
 It is relevant only if `org-bibtex-tags-are-keywords' is non-nil.
 Tag inheritance itself is controlled by `org-use-tag-inheritance'
-and `org-exclude-tags-from-inheritance'."
+and `org-tags-exclude-from-inheritance'."
   :group 'org-bibtex
   :version "26.1"
   :package-version '(Org . "8.3")

@@ -37,6 +37,7 @@
 (require 'org-compat)
 (require 'org-keys)
 
+(declare-function org-mode "org" ())
 (declare-function org-element-at-point "org-element" ())
 (declare-function org-element-class "org-element" (datum &optional parent))
 (declare-function org-element-context "org-element" (&optional element))
@@ -241,8 +242,7 @@ green, respectability.
   "If non-nil, the effect of TAB in a code block is as if it were
 issued in the language major mode buffer."
   :type 'boolean
-  :version "27.1"
-  :package-version "9.4"
+  :package-version '(Org . "9.4")
   :group 'org-babel)
 
 
@@ -363,6 +363,12 @@ where BEG and END are buffer positions and CONTENTS is a string."
 			 (search-forward "{" (line-end-position) t)))
 	     (end (progn (goto-char (org-element-property :end datum))
 			 (search-backward "}" (line-beginning-position) t))))
+	 (list beg end (buffer-substring-no-properties beg end))))
+      ((eq type 'latex-fragment)
+       (let ((beg (org-element-property :begin datum))
+	     (end (org-with-point-at (org-element-property :end datum)
+		    (skip-chars-backward " \t")
+		    (point))))
 	 (list beg end (buffer-substring-no-properties beg end))))
       ((org-element-property :contents-begin datum)
        (let ((beg (org-element-property :contents-begin datum))
@@ -553,6 +559,10 @@ Leave point in edit buffer."
 	(setq org-src-source-file-name source-file-name)
 	;; Start minor mode.
 	(org-src-mode)
+	;; Clear undo information so we cannot undo back to the
+	;; initial empty buffer.
+	(buffer-disable-undo (current-buffer))
+	(buffer-enable-undo)
 	;; Move mark and point in edit buffer to the corresponding
 	;; location.
 	(if remote
@@ -930,7 +940,7 @@ A coderef format regexp can only match at the end of a line."
 	   ;; remove any newline characters in order to preserve
 	   ;; table's structure.
 	   (when (org-element-lineage definition '(table-cell))
-	     (while (search-forward "\n" nil t) (replace-match "")))))
+	     (while (search-forward "\n" nil t) (replace-match " ")))))
        contents
        'remote))
     ;; Report success.
@@ -958,6 +968,46 @@ Throw an error when not at such a table."
      #'text-mode t)
     (when (bound-and-true-p flyspell-mode) (flyspell-mode -1))
     (table-recognize)
+    t))
+
+(defun org-edit-latex-fragment ()
+  "Edit LaTeX fragment at point."
+  (interactive)
+  (let ((context (org-element-context)))
+    (unless (and (eq 'latex-fragment (org-element-type context))
+		 (org-src--on-datum-p context))
+      (user-error "Not on a LaTeX fragment"))
+    (let* ((contents
+	    (buffer-substring-no-properties
+	     (org-element-property :begin context)
+	     (- (org-element-property :end context)
+		(org-element-property :post-blank context))))
+	   (delim-length (if (string-match "\\`\\$[^$]" contents) 1 2)))
+      ;; Make the LaTeX deliminators read-only.
+      (add-text-properties 0 delim-length
+			   (list 'read-only "Cannot edit LaTeX deliminator"
+				 'front-sticky t
+				 'rear-nonsticky t)
+			   contents)
+      (let ((l (length contents)))
+	(add-text-properties (- l delim-length) l
+			     (list 'read-only "Cannot edit LaTeX deliminator"
+				   'front-sticky nil
+				   'rear-nonsticky nil)
+			     contents))
+      (org-src--edit-element
+       context
+       (org-src--construct-edit-buffer-name (buffer-name) "LaTeX fragment")
+       (org-src-get-lang-mode "latex")
+       (lambda ()
+	 ;; Blank lines break things, replace with a single newline.
+	 (while (re-search-forward "\n[ \t]*\n" nil t) (replace-match "\n"))
+	 ;; If within a table a newline would disrupt the structure,
+	 ;; so remove newlines.
+	 (goto-char (point-min))
+	 (when (org-element-lineage context '(table-cell))
+	   (while (search-forward "\n" nil t) (replace-match " "))))
+       contents))
     t))
 
 (defun org-edit-latex-environment ()

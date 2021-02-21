@@ -35,6 +35,10 @@
 (declare-function notifications-notify "notifications" (&rest params))
 (declare-function org-element-property "org-element" (property element))
 (declare-function org-element-type "org-element" (element))
+(declare-function org-inlinetask-at-task-p "org-inlinetask" ())
+(declare-function org-inlinetask-goto-beginning "org-inlinetask" ())
+(declare-function org-inlinetask-goto-end "org-inlinetask" ())
+(declare-function org-inlinetask-in-task-p "org-inlinetask" ())
 (declare-function org-link-display-format "ol" (s))
 (declare-function org-link-heading-search-string "ol" (&optional string))
 (declare-function org-link-make-string "ol" (link &optional description))
@@ -1021,7 +1025,7 @@ CLOCK is a cons cell of the form (MARKER START-TIME)."
 	       (let ((element (org-element-at-point)))
 		 (when (eq (org-element-type element) 'drawer)
 		   (when (> (org-element-property :end element) (car clock))
-		     (org-flag-drawer nil element))
+		     (org-hide-drawer-toggle 'off nil element))
 		   (throw 'exit nil)))))))))))
 
 (defun org-clock-resolve (clock &optional prompt-fn last-valid fail-quietly)
@@ -1160,13 +1164,12 @@ If `only-dangling-p' is non-nil, only ask to resolve dangling
 		  (org-clock-resolve
 		   clock
 		   (or prompt-fn
-		       (function
-			(lambda (clock)
-			  (format
-			   "Dangling clock started %d mins ago"
-			   (floor (org-time-convert-to-integer
-                                   (org-time-since (cdr clock)))
-                                  60)))))
+		       (lambda (clock)
+			 (format
+			  "Dangling clock started %d mins ago"
+			  (floor (org-time-convert-to-integer
+				  (org-time-since (cdr clock)))
+				 60))))
 		   (or last-valid
 		       (cdr clock)))))))))))
 
@@ -1425,7 +1428,7 @@ the default behavior."
   "Clock out the currently clocked in task if Emacs is idle.
 See `org-clock-auto-clockout-timer' to set the idle time span.
 
-Thie is only effective when `org-clock-auto-clockout-insinuate'
+This is only effective when `org-clock-auto-clockout-insinuate'
 is present in the user configuration."
   (when (and (numberp org-clock-auto-clockout-timer)
 	     org-clock-current-task)
@@ -1578,7 +1581,7 @@ line and position cursor in that line."
 	      (insert ":" drawer ":\n:END:\n")
 	      (org-indent-region beg (point))
 	      (org-flag-region
-	       (line-end-position -1) (1- (point)) t 'org-hide-drawer)
+	       (line-end-position -1) (1- (point)) t 'outline)
 	      (forward-line -1))))
 	 ;; When a clock drawer needs to be created because of the
 	 ;; number of clock items or simply if it is missing, collect
@@ -1603,7 +1606,7 @@ line and position cursor in that line."
 	    (let ((end (point-marker)))
 	      (goto-char beg)
 	      (save-excursion (insert ":" drawer ":\n"))
-	      (org-flag-region (line-end-position) (1- end) t 'org-hide-drawer)
+	      (org-flag-region (line-end-position) (1- end) t 'outline)
 	      (org-indent-region (point) end)
 	      (forward-line)
 	      (unless org-log-states-order-reversed
@@ -1645,7 +1648,7 @@ to, overriding the existing value of `org-clock-out-switch-to-state'."
 	     org-clock-out-switch-to-state))
 	  (now (org-current-time org-clock-rounding-minutes))
 	  ts te s h m remove)
-      (setq org-clock-out-time now)
+      (setq org-clock-out-time (or at-time now))
       (save-excursion ; Do not replace this with `with-current-buffer'.
 	(with-no-warnings (set-buffer (org-clocking-buffer)))
 	(save-restriction
@@ -1956,7 +1959,12 @@ PROPNAME lets you set a custom text property instead of :org-clock-minutes."
   "Return time, clocked on current item in total."
   (save-excursion
     (save-restriction
-      (org-narrow-to-subtree)
+      (if (and (featurep 'org-inlinetask)
+	       (or (org-inlinetask-at-task-p)
+		   (org-inlinetask-in-task-p)))
+	  (narrow-to-region (save-excursion (org-inlinetask-goto-beginning) (point))
+			    (save-excursion (org-inlinetask-goto-end) (point)))
+	(org-narrow-to-subtree))
       (org-clock-sum tstart)
       org-clock-file-total-minutes)))
 
@@ -2133,7 +2141,10 @@ in the buffer and update it."
     (start (goto-char start)))
   (org-update-dblock))
 
-(org-dynamic-block-define "clocktable" #'org-clock-report)
+;;;###autoload
+(eval-after-load 'org
+  '(progn
+     (org-dynamic-block-define "clocktable" #'org-clock-report)))
 
 (defun org-day-of-week (day month year)
   "Return the day of the week as an integer."
@@ -2450,20 +2461,21 @@ the currently selected interval size."
   (setq params (org-combine-plists org-clocktable-defaults params))
   (catch 'exit
     (let* ((scope (plist-get params :scope))
+	   (base-buffer (org-base-buffer (current-buffer)))
 	   (files (pcase scope
 		    (`agenda
 		     (org-agenda-files t))
 		    (`agenda-with-archives
 		     (org-add-archive-files (org-agenda-files t)))
 		    (`file-with-archives
-		     (and buffer-file-name
-			  (org-add-archive-files (list buffer-file-name))))
+		     (let ((base-file (buffer-file-name base-buffer)))
+		       (and base-file
+			    (org-add-archive-files (list base-file)))))
 		    ((or `nil `file `subtree `tree
 			 (and (pred symbolp)
 			      (guard (string-match "\\`tree\\([0-9]+\\)\\'"
 						   (symbol-name scope)))))
-		     (or (buffer-file-name (buffer-base-buffer))
-			 (current-buffer)))
+		     base-buffer)
 		    ((pred functionp) (funcall scope))
 		    ((pred consp) scope)
 		    (_ (user-error "Unknown scope: %S" scope))))
@@ -2784,6 +2796,7 @@ a number of clock tables."
           (pcase step
             (`day "Daily report: ")
             (`week "Weekly report starting on: ")
+            (`semimonth "Semimonthly report starting on: ")
             (`month "Monthly report starting on: ")
             (`year "Annual report starting on: ")
             (_ (user-error "Unknown `:step' specification: %S" step))))
@@ -2833,6 +2846,9 @@ a number of clock tables."
                           (let ((offset (if (= dow week-start) 7
                                           (mod (- week-start dow) 7))))
                             (list 0 0 org-extend-today-until (+ d offset) m y)))
+                         (`semimonth (list 0 0 0
+                                           (if (< d 16) 16 1)
+                                           (if (< d 16) m (1+ m)) y))
                          (`month (list 0 0 0 month-start (1+ m) y))
                          (`year (list 0 0 org-extend-today-until 1 1 (1+ y)))))))
              (table-begin (line-beginning-position 0))
@@ -2949,7 +2965,7 @@ PROPERTIES: The list properties specified in the `:properties' parameter
 			     (org-trim
 			      (org-link-display-format
 			       (replace-regexp-in-string
-				"\\[[0-9]+%\\]\\|\\[[0-9]+/[0-9]+\\]" ""
+				"\\[[0-9]*\\(?:%\\|/[0-9]*\\)\\]" ""
 				headline)))))))
 		       (tgs (and tags (org-get-tags)))
 		       (tsp

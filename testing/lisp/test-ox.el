@@ -280,7 +280,12 @@ num:2 <:active")))
   (should-not
    (equal "Mine"
 	  (org-test-with-parsed-data "* COMMENT H1\n** H2\n#+EMAIL: Mine"
-				     (plist-get info :email)))))
+				     (plist-get info :email))))
+  ;; Keywords can be set to an empty value.
+  (should-not
+   (let ((user-full-name "Me"))
+     (org-test-with-parsed-data "#+AUTHOR:"
+				(plist-get info :author)))))
 
 (ert-deftest test-org-export/get-subtree-options ()
   "Test setting options from headline's properties."
@@ -2965,32 +2970,6 @@ Para2"
 
 ;;; Links
 
-(ert-deftest test-org-export/link-as-file ()
-  "Test `org-export-link-as-file' specifications."
-  ;; Export path as a "file"-type link.
-  (should
-   (equal "success"
-	  (let ((backend
-		 (org-export-create-backend
-		  :name 'test
-		  :transcoders
-		  '((link . (lambda (l _c _i)
-			      (if (equal "file" (org-element-property :type l))
-				  "success"
-				"failure")))))))
-	    (org-export-link-as-file "foo.org" nil backend nil))))
-  ;; Exported path handles "file"-type specific properties,
-  ;; e.g., :search-option.
-  (should
-   (equal "bar"
-	  (let ((backend
-		 (org-export-create-backend
-		  :name 'test
-		  :transcoders
-		  '((link . (lambda (l _c _i)
-			      (org-element-property :search-option l)))))))
-	    (org-export-link-as-file "foo.org::bar" nil backend nil)))))
-
 (ert-deftest test-org-export/custom-protocol-maybe ()
   "Test `org-export-custom-protocol-maybe' specifications."
   (should
@@ -4147,6 +4126,16 @@ Another text. (ref:text)
 | a | b |
 |---+---|
 | c | d |"
+     (org-export-table-has-header-p
+      (org-element-map tree 'table 'identity info 'first-match)
+      info)))
+  ;; With a multi-line header.
+  (should
+   (org-test-with-parsed-data "
+| a | b |
+| 0 | 1 |
+|---+---|
+| a | w |"
      (org-export-table-has-header-p
       (org-element-map tree 'table 'identity info 'first-match)
       info)))

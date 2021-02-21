@@ -380,6 +380,18 @@ reference (with row).  Mode string N."
 "
      1 calc)))
 
+(ert-deftest test-org-table/mode-string-u ()
+  "Basic: verify that mode string u results in units
+simplification mode applied to Calc formulas."
+  (org-test-table-target-expect
+   "
+| 1.5 A/B | 2.0 B | |
+"
+   "
+| 1.5 A/B | 2.0 B | 3. A |
+"
+   1 "#+TBLFM: $3=$1*$2;u"))
+
 (ert-deftest test-org-table/lisp-return-value ()
   "Basic: Return value of Lisp formulas."
   (org-test-table-target-expect
@@ -1304,6 +1316,66 @@ See also `test-org-table/copy-field'."
       (should (string= got
 		       expect)))))
 
+
+;;; Tables as Lisp
+
+(ert-deftest test-org-table/to-lisp ()
+  "Test `orgtbl-to-lisp' specifications."
+  ;; 2x2 no header
+  (should
+   (equal '(("a" "b") ("c" "d"))
+	  (org-table-to-lisp "|a|b|\n|c|d|")))
+  ;; 2x2 with 1-line header
+  (should
+   (equal '(("a" "b") hline ("c" "d"))
+	  (org-table-to-lisp "|a|b|\n|-\n|c|d|")))
+  ;; 2x4 with 2-line header
+  (should
+   (equal '(("a" "b") ("A" "B") hline ("c" "d") ("aa" "bb"))
+	  (org-table-to-lisp "|a|b|\n|A|B|\n|-\n|c|d|\n|aa|bb|")))
+  ;; leading hlines do not get stripped
+  (should
+   (equal '(hline ("a" "b") hline ("c" "d"))
+	  (org-table-to-lisp "|-\n|a|b|\n|-\n|c|d|")))
+  (should
+   (equal '(hline ("a" "b") ("c" "d"))
+	  (org-table-to-lisp "|-\n|a|b|\n|c|d|")))
+  (should
+   (equal '(hline hline hline hline ("a" "b") ("c" "d"))
+	  (org-table-to-lisp "|-\n|-\n|-\n|-\n|a|b|\n|c|d|"))))
+
+(ert-deftest test-org-table/collapse-header ()
+  "Test `orgtbl-to-lisp' specifications."
+  ;; 2x2 no header - no collapsing
+  (should
+   (equal '(("a" "b") ("c" "d"))
+	  (org-table-collapse-header (org-table-to-lisp "|a|b|\n|c|d|"))))
+  ;; 2x2 with 1-line header - no collapsing
+  (should
+   (equal '(("a" "b") hline ("c" "d"))
+	  (org-table-collapse-header (org-table-to-lisp "|a|b|\n|-\n|c|d|"))))
+  ;; 2x4 with 2-line header - collapsed
+  (should
+   (equal '(("a A" "b B") hline ("c" "d") ("aa" "bb"))
+	  (org-table-collapse-header (org-table-to-lisp "|a|b|\n|A|B|\n|-\n|c|d|\n|aa|bb|"))))
+  ;; 2x4 with 2-line header, custom glue - collapsed
+  (should
+   (equal '(("a.A" "b.B") hline ("c" "d") ("aa" "bb"))
+	  (org-table-collapse-header (org-table-to-lisp "|a|b|\n|A|B|\n|-\n|c|d|\n|aa|bb|") ".")))
+  ;; 2x4 with 2-line header, threshold 1 - not collapsed
+  (should
+   (equal '(("a" "b") ("A" "B") hline ("c" "d") ("aa" "bb"))
+	  (org-table-collapse-header (org-table-to-lisp "|a|b|\n|A|B|\n|-\n|c|d|\n|aa|bb|") nil 1)))
+  ;; 2x4 with 2-line header, threshold 2 - collapsed
+  (should
+   (equal '(("a A" "b B") hline ("c" "d") ("aa" "bb"))
+	  (org-table-collapse-header (org-table-to-lisp "|a|b|\n|A|B|\n|-\n|c|d|\n|aa|bb|") nil 2)))
+  ;; 2x8 with 6-line header, default threshold 5 - not collapsed
+  (should
+   (equal '(("a" "b") ("A" "B") ("a" "b") ("A" "B") ("a" "b") ("A" "B") hline ("c" "d") ("aa" "bb"))
+	  (org-table-collapse-header (org-table-to-lisp "|a|b|\n|A|B|\n|a|b|\n|A|B|\n|a|b|\n|A|B|\n|-\n|c|d|\n|aa|bb|")))))
+
+
 ;;; Radio Tables
 
 (ert-deftest test-org-table/to-generic ()
@@ -1768,7 +1840,16 @@ See also `test-org-table/copy-field'."
    (equal "| <c> |\n|  1  |\n| 123 |"
 	  (org-test-with-temp-text "| <c> |\n| 1 |\n| 123 |"
 	    (let ((org-table-number-fraction 0.5)) (org-table-align))
-	    (buffer-string)))))
+	    (buffer-string))))
+  ;; Handle gracefully tables with only horizontal rules.
+  (should
+   (org-test-with-temp-text "|-<point>--|"
+     (org-table-align)
+     t))
+  (should
+   (org-test-with-temp-text "|-<point>--|---------|\n|---|---|-----|"
+     (org-table-align)
+     t)))
 
 (ert-deftest test-org-table/align-buffer-tables ()
   "Align all tables when updating buffer."
@@ -1896,7 +1977,7 @@ See also `test-org-table/copy-field'."
       (org-table-sort-lines nil ?n)
       (buffer-string)))))
 
-
+
 ;;; Formulas
 
 (ert-deftest test-org-table/eval-formula ()
@@ -2341,6 +2422,50 @@ See also `test-org-table/copy-field'."
 	 (char-after)))))
 
 
+;;; Deleting columns
+(ert-deftest test-org-table/delete-column ()
+  "Test `org-table-delete-column'."
+  ;; Error when outside a table.
+  (should-error
+   (org-test-with-temp-text "Paragraph"
+     (org-table-delete-column)))
+  ;; Delete first column.
+  (should
+   (equal "| a |\n"
+	  (org-test-with-temp-text
+	      "| <point>  | a |\n"
+	    (org-table-delete-column)
+	    (buffer-string))))
+  ;; Delete column and check location of point.
+  (should
+   (= 2
+      (org-test-with-temp-text
+	  "| a | <point>b  | c |"
+	(org-table-delete-column)
+	(org-table-current-column))))
+  ;; Delete column when at end of line and after a "|".
+  (should
+   (equal "| a |\n"
+	  (org-test-with-temp-text
+	      "| a | b |<point>\n"
+	    (org-table-delete-column)
+	    (buffer-string))))
+  (should
+   (equal "| a |\n"
+	  (org-test-with-temp-text
+	      "| a | b |   <point>\n"
+	    (org-table-delete-column)
+	    (buffer-string))))
+  ;; Delete two columns starting with the last column.
+  (should
+   (equal "| a |\n"
+	  (org-test-with-temp-text
+	      "| a | b  | c<point> |"
+	    (org-table-delete-column)
+	    (org-table-delete-column)
+	    (buffer-string)))))
+
+
 ;;; Inserting rows, inserting columns
 
 (ert-deftest test-org-table/insert-column ()
@@ -2351,49 +2476,59 @@ See also `test-org-table/copy-field'."
      (org-table-insert-column)))
   ;; Insert new column after current one.
   (should
-   (equal "| a |   |\n"
+   (equal "|   | a |\n"
 	  (org-test-with-temp-text "| a |"
 	    (org-table-insert-column)
 	    (buffer-string))))
   (should
-   (equal "| a |   | b |\n"
+   (equal "|   | a | b |\n"
 	  (org-test-with-temp-text "| <point>a | b |"
 	    (org-table-insert-column)
 	    (buffer-string))))
   ;; Move point into the newly created column.
   (should
-   (equal "  |"
+   (equal "  | a |"
 	  (org-test-with-temp-text "| <point>a |"
 	    (org-table-insert-column)
 	    (buffer-substring-no-properties (point) (line-end-position)))))
   (should
-   (equal "  | b |"
+   (equal "  | a | b |"
 	  (org-test-with-temp-text "| <point>a | b |"
 	    (org-table-insert-column)
 	    (buffer-substring-no-properties (point) (line-end-position)))))
   ;; Handle missing vertical bar in the last column.
   (should
-   (equal "| a |   |\n"
+   (equal "|   | a |\n"
 	  (org-test-with-temp-text "| a"
 	    (org-table-insert-column)
 	    (buffer-string))))
   (should
-   (equal "  |"
+   (equal "  | a |"
 	  (org-test-with-temp-text "| <point>a"
 	    (org-table-insert-column)
 	    (buffer-substring-no-properties (point) (line-end-position)))))
   ;; Handle column insertion when point is before first column.
   (should
-   (equal " | a |   |\n"
+   (equal " |   | a |\n"
 	  (org-test-with-temp-text " | a |"
 	    (org-table-insert-column)
 	    (buffer-string))))
   (should
-   (equal " | a |   | b |\n"
+   (equal " |   | a | b |\n"
 	  (org-test-with-temp-text " | a | b |"
 	    (org-table-insert-column)
 	    (buffer-string)))))
 
+(ert-deftest test-org-table/insert-column-with-formula ()
+  "Test `org-table-insert-column' with a formula in place."
+  (should
+   (equal "|   | 1 | 1 | 2 |
+#+TBLFM: $4=$2+$3"
+	  (org-test-with-temp-text
+	   "| 1<point> | 1 | 2 |
+#+TBLFM: $3=$1+$2"
+	   (org-table-insert-column)
+	   (buffer-substring-no-properties (point-min) (point-max))))))
 
 
 ;;; Moving single cells

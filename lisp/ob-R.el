@@ -4,6 +4,7 @@
 
 ;; Author: Eric Schulte
 ;;	Dan Davison
+;; Maintainer: Jeremie Juste
 ;; Keywords: literate programming, reproducible research, R, statistics
 ;; Homepage: https://orgmode.org
 
@@ -460,7 +461,9 @@ last statement in BODY, as elisp."
   "R-specific processing of return value.
 Insert hline if column names in output have been requested."
   (if column-names-p
-      (cons (car result) (cons 'hline (cdr result)))
+      (condition-case nil
+	  (cons (car result) (cons 'hline (cdr result)))
+	(error "Could not parse R result"))
     result))
 
 (provide 'ob-R)

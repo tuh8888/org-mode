@@ -148,7 +148,7 @@
 (declare-function org-remove-file "org" (&optional file))
 (declare-function org-resolve-clocks "org" (&optional only-dangling-p prompt-fn last-valid))
 (declare-function org-return "org" (&optional indent))
-(declare-function org-return-indent "org" ())
+(declare-function org-return-and-maybe-indent "org" ())
 (declare-function org-reveal "org" (&optional siblings))
 (declare-function org-schedule "org" (arg &optional time))
 (declare-function org-self-insert-command "org" (N))
@@ -219,7 +219,7 @@
 ;;; Variables
 
 (defvar org-mode-map (make-sparse-keymap)
-  "Keymap fo Org mode.")
+  "Keymap for Org mode.")
 
 (defvaralias 'org-CUA-compatible 'org-replace-disputed-keys)
 
@@ -445,7 +445,7 @@ COMMANDS is a list of alternating OLDDEF NEWDEF command names."
 ;;;; TAB key with modifiers
 (org-defkey org-mode-map (kbd "C-i") #'org-cycle)
 (org-defkey org-mode-map (kbd "<tab>") #'org-cycle)
-(org-defkey org-mode-map (kbd "C-<tab>") #'org-force-cycle-archived)
+(org-defkey org-mode-map (kbd "C-c C-<tab>") #'org-force-cycle-archived)
 ;; Override text-mode binding to expose `complete-symbol' for
 ;; pcomplete functionality.
 (org-defkey org-mode-map (kbd "M-<tab>") nil)
@@ -618,7 +618,7 @@ COMMANDS is a list of alternating OLDDEF NEWDEF command names."
 (org-defkey org-mode-map (kbd "C-c C-k") #'org-kill-note-or-show-branches)
 (org-defkey org-mode-map (kbd "C-c #") #'org-update-statistics-cookies)
 (org-defkey org-mode-map (kbd "RET") #'org-return)
-(org-defkey org-mode-map (kbd "C-j") #'org-return-indent)
+(org-defkey org-mode-map (kbd "C-j") #'org-return-and-maybe-indent)
 (org-defkey org-mode-map (kbd "C-c ?") #'org-table-field-info)
 (org-defkey org-mode-map (kbd "C-c SPC") #'org-table-blank-field)
 (org-defkey org-mode-map (kbd "C-c +") #'org-table-sum)
