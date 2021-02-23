@@ -816,9 +816,9 @@ Raise an error when current buffer is not a source editing buffer."
   org-src--source-type)
 
 (defun org-src-switch-to-buffer (buffer context)
-  (pcase (if (functionp org-src-window-setup)
-             (funcall org-src-window-setup)
-           org-src-window-setup)
+  (pcase (if (symbolp org-src-window-setup)
+             org-src-window-setup
+           (funcall org-src-window-setup))
     (`plain
      (when (eq context 'exit) (quit-restore-window))
      (pop-to-buffer buffer))
