@@ -211,8 +211,8 @@
 		result0)))
       (ob-clojure-string-or-list
        (reverse (delete "" (mapcar (lambda (r)
-				     (replace-regexp-in-string "nil" "" r))
-				   result0)))))))
+                                     (if r (replace-regexp-in-string "nil" "" r) ""))
+                                   result0)))))))
 
 (defun ob-clojure-eval-with-slime (expanded params)
   "Evaluate EXPANDED code block with PARAMS using slime."
