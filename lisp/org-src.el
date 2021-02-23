@@ -163,17 +163,19 @@ reorganize-frame   Show only two windows on the current frame, the current
                    window and the edit buffer.
 other-frame        Use `switch-to-buffer-other-frame' to display edit buffer.
                    Also, when exiting the edit buffer, kill that frame.
+function           A function may be provided which returns one of the above values.
 
 Values that modify the window layout (reorganize-frame, split-window-below,
 split-window-right) will restore the layout after exiting the edit buffer."
   :group 'org-edit-structure
   :type '(choice
-	  (const current-window)
-	  (const split-window-below)
-	  (const split-window-right)
-	  (const other-frame)
-	  (const other-window)
-	  (const reorganize-frame)))
+          (const current-window)
+          (const split-window-below)
+          (const split-window-right)
+          (const other-frame)
+          (const other-window)
+          (const reorganize-frame)
+          (function :tag "Other (specify)")))
 
 (defvar org-src-mode-hook nil
   "Hook run after Org switched a source code snippet to its Emacs mode.
@@ -814,7 +816,9 @@ Raise an error when current buffer is not a source editing buffer."
   org-src--source-type)
 
 (defun org-src-switch-to-buffer (buffer context)
-  (pcase org-src-window-setup
+  (pcase (if (functionp org-src-window-setup)
+             (funcall org-src-window-setup)
+           org-src-window-setup)
     (`plain
      (when (eq context 'exit) (quit-restore-window))
      (pop-to-buffer buffer))
