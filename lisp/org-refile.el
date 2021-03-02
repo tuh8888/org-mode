@@ -620,7 +620,8 @@ this function appends the default value from
 	       (lambda (x)
 		 (if (and (not (member org-refile-use-outline-path
 				       '(file full-file-path)))
-			  (not (equal filename (nth 1 x))))
+                          (not (equal filename (nth 1 x)))
+                          (nth 1 x))
 		     (cons (concat (car x) extra " ("
 				   (file-name-nondirectory (nth 1 x)) ")")
 			   (cdr x))
