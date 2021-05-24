@@ -32,7 +32,6 @@ orgcard.txt
 org
 orgguide
 org-loaddefs.el
-org-version.el
 doc/org.texi
 doc/orgguide.texi
 doc/org-version.inc
